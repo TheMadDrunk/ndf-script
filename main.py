@@ -15,7 +15,7 @@ IMAP_SERVER = os.getenv("IMAP_SERVER")
 SEARCH_MONTH = os.getenv("SEARCH_MONTH")  # Example: "Jan" for January
 SEARCH_YEAR = os.getenv("SEARCH_YEAR")
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SUBJECT_KEYWORDS = os.getenv("SUBJECT_KEYWORDS")  # Both directions
+SUBJECT_KEYWORDS = ["KENITRA - CASA PORT", "CASA PORT - KENITRA"] # Both directions
 
 # Folders
 ATTACHMENT_DIR = f"attachments/{SEARCH_YEAR}-{SEARCH_MONTH}"
@@ -48,8 +48,8 @@ def search_emails(mail):
     print(f"Search result: {result}, {data}")
     return data[0].split()
 
-def download_pdfs(mail, email_ids):
-    """Download PDF attachments from emails."""
+def extract_email_data(mail, email_ids):
+    """Extract relevant data from emails and download PDF attachments."""
     email_data = []  # List to store detailed information for each email
 
     for e_id in email_ids:
@@ -68,21 +68,41 @@ def download_pdfs(mail, email_ids):
                 print(f"Warning: Could not parse date '{email_date}', skipping...")
                 continue
 
-        date_str = date_obj.strftime("%d/%m/%Y")  # Changed date format to match desired output
+        date_str = date_obj.strftime("%d/%m/%Y")
         
-        # Determine direction and price from email content
+        # Download PDF attachments
+        for part in msg.walk():
+            if part.get_content_maintype() == 'multipart':
+                continue
+            if part.get('Content-Disposition') is None:
+                continue
+
+            filename = part.get_filename()
+            if filename and filename.lower().endswith('.pdf'):
+                # Create a safe filename with date and original name
+                safe_filename = f"{date_obj.strftime('%Y%m%d')}_{filename}"
+                filepath = os.path.join(ATTACHMENT_DIR, safe_filename)
+                
+                # Save the attachment
+                with open(filepath, 'wb') as f:
+                    f.write(part.get_payload(decode=True))
+                print(f"Saved attachment: {safe_filename}")
+        
+        # Extract email body and process ticket information
         email_body = ""
         for part in msg.walk():
             if part.get_content_type() == "text/plain":
                 email_body = part.get_payload(decode=True).decode()
                 break
         
+        billets = 0
+        ticket_price = 0
         if "KENITRA - CASA PORT" in email_body:
-            direction = "KENITRA->CASA"
-            ticket_price = 60
-        else:
-            direction = "CASA->KENITRA"
-            ticket_price = 100
+            billets+=1
+            ticket_price += 60
+        elif "CASA PORT - KENITRA" in email_body:
+            billets+=1
+            ticket_price += 100
 
         # Store email information
         email_data.append({
@@ -90,7 +110,7 @@ def download_pdfs(mail, email_ids):
             'CLIENT': '',  # To be filled manually
             'PROJET': '',  # To be filled manually
             'TYPE DE FACTURATION': 'Transport',
-            'DESCRIPTION': f'Billet de train {direction}',
+            'BILLET': billets,
             'TYPE': '',  # To be filled manually
             'MONTANT': ticket_price
         })
@@ -108,16 +128,18 @@ def write_summary_csv(email_data):
         'PROJET': 'first',
         'TYPE DE FACTURATION': 'first',
         'TYPE': 'first',
-        'MONTANT': 'sum'  # Sum the ticket prices
+        'MONTANT': 'sum',  # Sum the ticket prices
+        'BILLET': 'sum',
     }).reset_index()
-    
-    # Update description and add taxi fare
-    grouped['DESCRIPTION'] = grouped.apply(
-        lambda row: f"{len(email_data)} billets de train et taxi aller-retour", axis=1
+    print("df",df)
+    print("grouped",grouped)
+    # Update description with correct ticket count
+    grouped['DESCRIPTION'] = grouped['BILLET'].apply(
+        lambda row: f"{row} billets de train et taxi aller-retour"
     )
     
     # Add taxi fare (30dh per day)
-    grouped['MONTANT'] = grouped['MONTANT'] + 30
+    grouped['MONTANT'] = grouped['MONTANT'] + 30  # Add fixed taxi fare
     
     # Sort by date
     grouped = grouped.sort_values('DATE')
@@ -135,8 +157,8 @@ if __name__ == "__main__":
     print("Connected to email")
     email_ids = search_emails(mail)
     print("Emails found")
-    email_data = download_pdfs(mail, email_ids)
-    print("PDFs downloaded")
+    email_data = extract_email_data(mail, email_ids)
+    print("Email data extracted")
     write_summary_csv(email_data)
     print("Summary CSV created")
     mail.logout()
