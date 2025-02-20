@@ -30,10 +30,18 @@ def connect_to_email():
 
 def get_next_month_and_year(month, year):
     """Get the next month and year."""
-    if month == "Dec":
-        return "Jan", str(int(year) + 1)
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    
+    current_month_index = months.index(month)
+    if current_month_index == 11:  # December
+        next_month = months[0]  # January
+        next_year = str(int(year) + 1)
     else:
-        return "Feb", year
+        next_month = months[current_month_index + 1]
+        next_year = year
+        
+    return next_month, next_year
 
 def search_emails(mail):
     """Search for emails in the given month from a specific sender containing either keyword."""
