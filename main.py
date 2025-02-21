@@ -12,14 +12,54 @@ EMAIL_PASS = os.getenv("EMAIL_PASS")
 IMAP_SERVER = os.getenv("IMAP_SERVER")
 
 # Configurable parameters
-SEARCH_MONTH = os.getenv("SEARCH_MONTH")  # Example: "Jan" for January
+# Month to search for in emails (e.g., "Jan" for January)
+SEARCH_MONTH = os.getenv("SEARCH_MONTH")
+
+# Year to search for in emails
 SEARCH_YEAR = os.getenv("SEARCH_YEAR")
+
+# Email address to filter emails from
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-SUBJECT_KEYWORDS = ["KENITRA - CASA PORT", "CASA PORT - KENITRA"] # Both directions
+
+# Default taxi fare amount if not specified in environment
+TAXI_FARE = float(os.getenv("TAXI_FARE", 30))  # Default: 30
+
+# Load route configurations
+def load_route_configs():
+    """Load route configurations from environment variables."""
+    routes = {}
+    route_index = 1
+    
+    while True:
+        route_name = os.getenv(f"ROUTE_{route_index}_NAME")
+        if not route_name:
+            break
+            
+        keywords = os.getenv(f"ROUTE_{route_index}_KEYWORDS", "").split(",")
+        price = float(os.getenv(f"ROUTE_{route_index}_PRICE", 0))
+        
+        if keywords and price > 0:
+            routes[route_name] = {
+                "keywords": [k.strip() for k in keywords],
+                "price": price
+            }
+        
+        route_index += 1
+    
+    return routes
+
+# Load route configurations
+ROUTE_CONFIGS = load_route_configs()
+
+# Create search keywords from all route keywords
+SEARCH_KEYWORDS = []
+for route_config in ROUTE_CONFIGS.values():
+    SEARCH_KEYWORDS.extend(route_config["keywords"])
 
 # Folders
 ATTACHMENT_DIR = f"attachments/{SEARCH_YEAR}-{SEARCH_MONTH}"
 os.makedirs(ATTACHMENT_DIR, exist_ok=True)
+os.makedirs("data", exist_ok=True)
 
 def connect_to_email():
     """Connect to IMAP server and select inbox."""
@@ -44,17 +84,32 @@ def get_next_month_and_year(month, year):
     return next_month, next_year
 
 def search_emails(mail):
-    """Search for emails in the given month from a specific sender containing either keyword."""
+    """Search for emails in the given month from a specific sender containing route keywords."""
     (next_month, next_year) = get_next_month_and_year(SEARCH_MONTH, SEARCH_YEAR)
     
-    # Create two separate search criteria for each direction
-    search_criteria_1 = f'FROM {SENDER_EMAIL} BODY "{SUBJECT_KEYWORDS[0]}" SINCE "1-{SEARCH_MONTH}-{SEARCH_YEAR}" BEFORE "1-{next_month}-{next_year}"'
-    search_criteria_2 = f'FROM {SENDER_EMAIL} BODY "{SUBJECT_KEYWORDS[1]}" SINCE "1-{SEARCH_MONTH}-{SEARCH_YEAR}" BEFORE "1-{next_month}-{next_year}"'
-    search_criteria = f'{search_criteria_1} OR {search_criteria_2}'
+    # Create search criteria for all keywords
+    search_criteria_parts = []
+    for keyword in SEARCH_KEYWORDS:
+        if keyword.strip():  # Skip empty keywords
+            search_criteria_parts.append(
+                f'FROM {SENDER_EMAIL} BODY "{keyword.strip()}" '
+                f'SINCE "1-{SEARCH_MONTH}-{SEARCH_YEAR}" '
+                f'BEFORE "1-{next_month}-{next_year}"'
+            )
+    
+    search_criteria = " OR ".join(search_criteria_parts)
     print(f"Searching with criteria: {search_criteria}")
     result, data = mail.search(None, search_criteria)
     print(f"Search result: {result}, {data}")
     return data[0].split()
+
+def find_matching_route(email_body):
+    """Find the matching route based on keywords in the email body."""
+    for route_name, config in ROUTE_CONFIGS.items():
+        for keyword in config["keywords"]:
+            if keyword.strip() in email_body:
+                return route_name, config["price"]
+    return None, 0
 
 def extract_email_data(mail, email_ids):
     """Extract relevant data from emails and download PDF attachments."""
@@ -103,30 +158,30 @@ def extract_email_data(mail, email_ids):
                 email_body = part.get_payload(decode=True).decode()
                 break
         
-        billets = 0
-        ticket_price = 0
-        if "KENITRA - CASA PORT" in email_body:
-            billets+=1
-            ticket_price += 60
-        elif "CASA PORT - KENITRA" in email_body:
-            billets+=1
-            ticket_price += 100
+        # Find matching route and price
+        route_found, ticket_price = find_matching_route(email_body)
 
-        # Store email information
-        email_data.append({
-            'DATE': date_str,
-            'CLIENT': '',  # To be filled manually
-            'PROJET': '',  # To be filled manually
-            'TYPE DE FACTURATION': 'Transport',
-            'BILLET': billets,
-            'TYPE': '',  # To be filled manually
-            'MONTANT': ticket_price
-        })
+        if route_found:
+            # Store email information
+            email_data.append({
+                'DATE': date_str,
+                'CLIENT': '',  # To be filled manually
+                'PROJET': '',  # To be filled manually
+                'TYPE DE FACTURATION': 'Transport',
+                'BILLET': 1,
+                'ROUTE': route_found,
+                'TYPE': '',  # To be filled manually
+                'MONTANT': ticket_price
+            })
 
     return email_data
 
 def write_summary_csv(email_data):
     """Write the detailed summary to a CSV file."""
+    if not email_data:
+        print("No email data to process")
+        return
+        
     # Convert list of dictionaries to DataFrame
     df = pd.DataFrame(email_data)
     
@@ -138,16 +193,17 @@ def write_summary_csv(email_data):
         'TYPE': 'first',
         'MONTANT': 'sum',  # Sum the ticket prices
         'BILLET': 'sum',
+        'ROUTE': lambda x: ', '.join(set(x))  # Combine unique routes
     }).reset_index()
-    print("df",df)
-    print("grouped",grouped)
-    # Update description with correct ticket count
-    grouped['DESCRIPTION'] = grouped['BILLET'].apply(
-        lambda row: f"{row} billets de train et taxi aller-retour"
+
+    # Update description with correct ticket count and routes
+    grouped['DESCRIPTION'] = grouped.apply(
+        lambda row: f"{int(row['BILLET'])} billet{'s' if row['BILLET'] > 1 else ''} de train ({row['ROUTE']}) et taxi aller-retour",
+        axis=1
     )
     
-    # Add taxi fare (30dh per day)
-    grouped['MONTANT'] = grouped['MONTANT'] + 30  # Add fixed taxi fare
+    # Add taxi fare
+    grouped['MONTANT'] = grouped['MONTANT'] + TAXI_FARE
     
     # Sort by date
     grouped = grouped.sort_values('DATE')
@@ -157,16 +213,20 @@ def write_summary_csv(email_data):
     grouped = grouped[columns]
     
     # Save to CSV
-    grouped.to_csv(f"data/{SEARCH_YEAR}-{SEARCH_MONTH}-summary.csv", index=False)
-    print(f"CSV summary created: data/{SEARCH_YEAR}-{SEARCH_MONTH}-summary.csv")
+    output_file = f"data/{SEARCH_YEAR}-{SEARCH_MONTH}-summary.csv"
+    grouped.to_csv(output_file, index=False)
+    print(f"CSV summary created: {output_file}")
 
 if __name__ == "__main__":
+    if not ROUTE_CONFIGS:
+        print("No route configurations found in .env file. Please configure at least one route.")
+        exit(1)
+        
     mail = connect_to_email()
     print("Connected to email")
     email_ids = search_emails(mail)
-    print("Emails found")
+    print(f"Found {len(email_ids)} matching emails")
     email_data = extract_email_data(mail, email_ids)
-    print("Email data extracted")
+    print(f"Extracted data from {len(email_data)} emails")
     write_summary_csv(email_data)
-    print("Summary CSV created")
     mail.logout()
