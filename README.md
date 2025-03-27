@@ -1,14 +1,14 @@
 # Train and Taxi Expense Processing
 
 ## Overview
-This project automates the processing of train tickets and taxi receipts from email, generating monthly summary reports with proper descriptions and calculations. It specifically handles train tickets between Kenitra and Casa Port, along with associated taxi expenses.
+This project automates the processing of train tickets and taxi receipts from email, generating monthly summary reports with proper descriptions and calculations. It supports configurable routes and can be customized to handle various train journeys and associated expenses.
 
 ## Features
 - Automatically fetches train ticket emails from your inbox
 - Downloads and organizes PDF attachments
 - Calculates total expenses including train tickets and taxi fares
 - Generates monthly summary reports in CSV format
-- Supports both directions: Kenitra to Casa Port and Casa Port to Kenitra
+- Supports multiple configurable routes with customizable keywords and prices
 
 ## Prerequisites
 - Python 3.6 or higher
@@ -51,6 +51,24 @@ cp .env.example .env
 - `SENDER_EMAIL`: Email address that sends the train tickets
 - `TAXI_FARE`: Standard taxi fare amount to add per trip
 
+6. Configure your train routes by adding the following for each route:
+- `ROUTE_X_NAME`: Name of the route (e.g., "KENITRA - CASA PORT")
+- `ROUTE_X_KEYWORDS`: Comma-separated keywords that identify this route in emails
+- `ROUTE_X_PRICE`: Price of the train ticket for this route
+
+Example route configuration:
+```
+ROUTE_1_NAME="KENITRA - CASA PORT"
+ROUTE_1_KEYWORDS="KENITRA - CASA PORT,Kenitra Casa Port,KENITRA CASA PORT"
+ROUTE_1_PRICE=60
+
+ROUTE_2_NAME="CASA PORT - KENITRA"
+ROUTE_2_KEYWORDS="CASA PORT - KENITRA,Casa Port Kenitra,CASA PORT KENITRA"
+ROUTE_2_PRICE=100
+```
+
+You can add as many routes as needed by incrementing the route number.
+
 ## Usage
 
 1. Ensure your `.env` file is properly configured
@@ -89,12 +107,20 @@ The generated CSV file includes the following columns:
 ```
 
 ## Notes
-- The script automatically calculates:
-  - Kenitra to Casa Port: 60 DH per ticket
-  - Casa Port to Kenitra: 100 DH per ticket
-  - Additional taxi fare as specified in .env
+- The script automatically looks for train routes based on your configuration in the .env file
+- Multiple train routes can be defined with different prices
+- Email keywords are used to identify which route a particular ticket belongs to
 - PDF attachments are saved with a date prefix for better organization
 - The summary CSV groups multiple tickets on the same day
+
+## How Route Configuration Works
+The script uses the route configurations to:
+1. Search for emails containing keywords for any configured route
+2. Identify which specific route a ticket belongs to based on email content
+3. Apply the correct price for that route in the expense summary
+4. Generate appropriate descriptions in the summary report
+
+You can add, modify, or remove routes by editing the .env file without changing the code.
 
 ## Contributing
 Feel free to submit issues and enhancement requests!
